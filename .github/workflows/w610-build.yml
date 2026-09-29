@@ -1,0 +1,26 @@
+name: W610 APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [w610-thumbnail-fix]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platforms;android-36"
+      - working-directory: android/CyanBridge
+        env:
+          META_GITHUB_TOKEN: ${{ secrets.META_GITHUB_TOKEN }}
+        run: chmod +x gradlew && ./gradlew --no-daemon --stacktrace :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: w610-apk
+          path: android/CyanBridge/app/build/outputs/apk/debug/app-debug.apk
