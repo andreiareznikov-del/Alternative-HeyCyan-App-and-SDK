@@ -109,6 +109,8 @@ android {
 
     buildTypes {
         debug {
+            applicationIdSuffix ".w610test"
+            versionNameSuffix "-w610test"
             manifestPlaceholders = [
                     mwdat_application_id: "0",
                     mwdat_client_token: "0",
