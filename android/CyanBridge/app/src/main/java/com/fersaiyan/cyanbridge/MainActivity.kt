@@ -4817,13 +4817,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         pendingImageQuestionOfferSpokenQuestion = false
         Log.i(
             "ImageQuestionAudio",
-            "[$sourceTag] Photo ready; starting parallel question window after the 500 ms settling delay " +
+            "[$sourceTag] Photo ready; starting parallel question window after the 250 ms settling delay " +
                 "offerSpokenQuestion=$offerSpokenQuestion",
         )
-        startParallelAudioQuestionIfEligible(offerSpokenQuestion)
-        when (pendingImageQuestionSource) {
-            ImageQuestionSource.HIGH_QUALITY -> requestHighQualityImageForQuestion(sourceTag)
-            ImageQuestionSource.FAST_PREVIEW -> requestImageThumbnailForQuestion(sourceTag)
+        lifecycleScope.launch {
+            delay(250L)
+            startParallelAudioQuestionIfEligible(offerSpokenQuestion)
+            when (pendingImageQuestionSource) {
+                ImageQuestionSource.HIGH_QUALITY -> requestHighQualityImageForQuestion(sourceTag)
+                ImageQuestionSource.FAST_PREVIEW -> requestImageThumbnailForQuestion(sourceTag)
+            }
         }
     }
 
@@ -5177,7 +5180,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
 
         Log.i("AIHijack", "[$sourceTag] Requesting BLE thumbnail")
-        if (isGlassesCommandBlocked("AI thumbnail request")) return false
+        if (isGlassesCommandBlocked("AI thumbnail request")) {
+            GlassesSessionCoordinator.releaseBackgroundCommand(permit)
+            return false
+        }
         try {
             LargeDataHandler.getInstance().getPictureThumbnails(thumbCallback)
             Log.i("ImageQuestionTransfer", "[$sourceTag] getPictureThumbnails request submitted")
@@ -5195,6 +5201,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     "completed=${completed.get()} connected=${BleOperateManager.getInstance().isConnected} " +
                     "activeSession=${GlassesSessionCoordinator.currentSession()}; keeping SDK response slot isolated",
             )
+            GlassesSessionCoordinator.releaseBackgroundCommand(permit)
             return false
         }
 
