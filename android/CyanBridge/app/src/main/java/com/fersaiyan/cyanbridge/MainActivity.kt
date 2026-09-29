@@ -5199,7 +5199,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 "ImageQuestionTransfer",
                 "[$sourceTag] BLE thumbnail request timed out chunks=${callbackCount.get()} bytes=${totalBytes.get()} " +
                     "completed=${completed.get()} connected=${BleOperateManager.getInstance().isConnected} " +
-                    "activeSession=${GlassesSessionCoordinator.currentSession()}; keeping SDK response slot isolated",
+                    "activeSession=${GlassesSessionCoordinator.currentSession()}; releasing BLE command permit",
             )
             GlassesSessionCoordinator.releaseBackgroundCommand(permit)
             return false
