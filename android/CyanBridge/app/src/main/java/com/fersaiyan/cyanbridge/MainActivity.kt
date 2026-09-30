@@ -11961,7 +11961,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     )
                     if (isAiHijackEnabled) {
                         runOnUiThread {
-                            if (maybeShowGeminiChatGptImageRequirementsWarning()) {
+                            if (
+                                BuildConfig.APPLICATION_ID != "com.fersaiyan.cyanbridge.w610test" &&
+                                maybeShowGeminiChatGptImageRequirementsWarning()
+                            ) {
                                 imageCaptureAwaitingNotification.set(false)
                                 pendingImageCaptureSourceTag = null
                                 return@runOnUiThread
