@@ -5270,6 +5270,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         runOnUiThread {
             Toast.makeText(this, transferSummary, Toast.LENGTH_LONG).show()
         }
+        if (BuildConfig.APPLICATION_ID == "com.fersaiyan.cyanbridge.w610test") {
+            finishAiQuestionForegroundWork()
+            return
+        }
 
         CoroutineScope(Dispatchers.IO).launch {
             var initialQuestion = pendingVoiceImageQuestion
@@ -11981,7 +11985,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                                     sourceTag = sourceTag,
                                     source = ImageQuestionSourcePolicy.defaultSource(),
                                     thumbnailQuality = ImageQuestionSourcePolicy.defaultThumbnailQuality(),
-                                    offerSpokenQuestion = true,
+                                    offerSpokenQuestion = BuildConfig.APPLICATION_ID != "com.fersaiyan.cyanbridge.w610test",
                                 )
                             }
                         }
