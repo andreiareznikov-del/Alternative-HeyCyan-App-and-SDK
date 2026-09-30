@@ -4817,17 +4817,20 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         pendingImageQuestionOfferSpokenQuestion = false
         Log.i(
             "ImageQuestionAudio",
-            "[$sourceTag] Photo ready; starting parallel question window after the 250 ms settling delay " +
+            "[$sourceTag] Photo ready; starting parallel question window " +
                 "offerSpokenQuestion=$offerSpokenQuestion",
         )
-        lifecycleScope.launch {
-            delay(250L)
+        
+            
             startParallelAudioQuestionIfEligible(offerSpokenQuestion)
             when (pendingImageQuestionSource) {
                 ImageQuestionSource.HIGH_QUALITY -> requestHighQualityImageForQuestion(sourceTag)
-                ImageQuestionSource.FAST_PREVIEW -> requestImageThumbnailForQuestion(sourceTag)
+            ImageQuestionSource.FAST_PREVIEW -> lifecycleScope.launch {
+    delay(250L)
+    requestImageThumbnailForQuestion(sourceTag)
+}
             }
-        }
+        
     }
 
     private fun captureMetaImageForQuestion(sourceTag: String) {
