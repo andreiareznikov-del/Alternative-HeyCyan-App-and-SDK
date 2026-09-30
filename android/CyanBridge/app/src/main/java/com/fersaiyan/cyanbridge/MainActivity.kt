@@ -5184,7 +5184,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         Log.i("AIHijack", "[$sourceTag] Requesting BLE thumbnail")
         if (isGlassesCommandBlocked("AI thumbnail request")) {
-            GlassesSessionCoordinator.releaseBackgroundCommand(permit)
+        
             return false
         }
         try {
@@ -5202,9 +5202,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 "ImageQuestionTransfer",
                 "[$sourceTag] BLE thumbnail request timed out chunks=${callbackCount.get()} bytes=${totalBytes.get()} " +
                     "completed=${completed.get()} connected=${BleOperateManager.getInstance().isConnected} " +
-                    "activeSession=${GlassesSessionCoordinator.currentSession()}; releasing BLE command permit",
+                    "activeSession=${GlassesSessionCoordinator.currentSession()}; keeping SDK response slot isolated",
             )
-            GlassesSessionCoordinator.releaseBackgroundCommand(permit)
+        
             return false
         }
 
