@@ -6618,6 +6618,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun configureHeyCyanWakeWordIfNeeded() {
+        if (BuildConfig.APPLICATION_ID == "com.fersaiyan.cyanbridge.w610test") {
+            wakeWordConfiguredForConnection = true
+            Log.i("DeviceNotify", "W610 test: onboard Hey Cyan wake word disabled")
+            return
+        }
         if (wakeWordConfiguredForConnection ||
             !BleOperateManager.getInstance().isConnected ||
             DeviceProfileStore.selectedClass(this) != com.fersaiyan.cyanbridge.shared.devices.DeviceClass.HEY_CYAN
@@ -11996,7 +12001,23 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 0x03 -> {
                     if (response.loadData.size > 7 && response.loadData[7].toInt() == 1) {
                         Log.i("DeviceNotify", "AI Button Pressed - Hijacking to Phone Assistant")
-                        if (isAiHijackEnabled) {
+                        if (BuildConfig.APPLICATION_ID == "com.fersaiyan.cyanbridge.w610test") {
+                            Log.i("DeviceNotify", "W610 test: 0x03 -> camera transport test")
+                            runOnUiThread {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "W610 test: 0x03 -> camera",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                handleGlassesImageButtonPressed(
+                                    triggerCapture = true,
+                                    sourceTag = "w610_test_0x03",
+                                    source = ImageQuestionSource.FAST_PREVIEW,
+                                    thumbnailQuality = ImageQuestionSourcePolicy.defaultThumbnailQuality(),
+                                    offerSpokenQuestion = false,
+                                )
+                            }
+                        } else if (isAiHijackEnabled) {
                             handleAiWakeWordActivation("heycyan")
                         } else {
                             //The glasses activate the microphone to start speaking
