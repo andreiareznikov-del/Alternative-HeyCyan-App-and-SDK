@@ -1,0 +1,49 @@
+name: W610 test APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - w610-thumbnail-fix
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: false
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 36
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Build W610 test APK
+        working-directory: android/CyanBridge
+        env:
+          GITHUB_TOKEN: ""
+          META_GITHUB_TOKEN: ""
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CyanBridge-W610-Fix
+          path: android/CyanBridge/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

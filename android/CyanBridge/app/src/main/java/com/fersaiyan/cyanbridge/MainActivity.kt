@@ -437,6 +437,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         private const val ADAPTIVE_IP_RETRY_AT_MS = 28_000L
         private const val ADAPTIVE_DEVICE_RESET_AT_MS = 36_000L
         private const val IMAGE_THUMBNAIL_TRANSFER_TIMEOUT_MS = 20_000L
+        private const val IMAGE_THUMBNAIL_POST_READY_SETTLE_MS = 250L
+        private const val IMAGE_THUMBNAIL_RETRY_DELAY_MS = 300L
+        private const val IMAGE_THUMBNAIL_MAX_ATTEMPTS = 2
         private const val VOICE_CUE_ROUTE_SETTLE_MS = 500L
         private const val VOICE_BLUETOOTH_ROUTE_TIMEOUT_MS = 3_000L
         private const val VOICE_CUE_BLUETOOTH_TAIL_MS = 50L
@@ -4817,7 +4820,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         pendingImageQuestionOfferSpokenQuestion = false
         Log.i(
             "ImageQuestionAudio",
-            "[$sourceTag] Photo ready; starting parallel question window after the 500 ms settling delay " +
+            "[$sourceTag] Photo ready; starting image-question flow; " +
                 "offerSpokenQuestion=$offerSpokenQuestion",
         )
         startParallelAudioQuestionIfEligible(offerSpokenQuestion)
@@ -5072,59 +5075,92 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             return
         }
 
-        val outDir = getExternalFilesDir("DCIM") ?: filesDir
-        val file = File(outDir, "AI_Thumb_${sourceTag}_${System.currentTimeMillis()}.jpg")
-        runCatching {
-            file.parentFile?.mkdirs()
-            if (file.exists()) file.delete()
-        }
-
         val startedAtMs = System.currentTimeMillis()
-        Log.i(
-            "ImageQuestionTransfer",
-            "[$sourceTag] Starting thumbnail transfer file=${file.absolutePath} " +
-                "quality=${pendingImageThumbnailQuality.label}/${pendingImageThumbnailQuality.sdkValue}",
-        )
-        CoroutineScope(Dispatchers.IO).launch {
-            var thumbnailTransferStarted = false
-            try {
-                runCatching {
-                    FileOutputStream(file, false).use { }
-                }.onFailure { error ->
-                    Log.e("AIHijack", "[$sourceTag] Failed to prepare thumbnail file: ${error.message}", error)
-                }
+        val outDir = getExternalFilesDir("DCIM") ?: filesDir
+        outDir.mkdirs()
 
-                thumbnailTransferStarted = true
-                if (receivePictureThumbnail(file, sourceTag, permit)) {
-                    Log.i(
-                        "AIHijack",
-                        "[$sourceTag] Thumbnail transfer complete: ${file.absolutePath} (${file.length()} bytes)",
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                Log.i(
+                    "ImageQuestionTransfer",
+                    "[$sourceTag] Photo-ready received; waiting ${IMAGE_THUMBNAIL_POST_READY_SETTLE_MS}ms " +
+                        "before BLE thumbnail read",
+                )
+                delay(IMAGE_THUMBNAIL_POST_READY_SETTLE_MS)
+
+                for (attempt in 1..IMAGE_THUMBNAIL_MAX_ATTEMPTS) {
+                    val file = File(
+                        outDir,
+                        "AI_Thumb_${sourceTag}_${startedAtMs}_attempt${attempt}.jpg",
                     )
-                    withContext(Dispatchers.Main) {
-                        onImageReadyForQuestion(
-                            imagePath = file.absolutePath,
-                            source = ImageQuestionSource.FAST_PREVIEW,
-                            transferDurationMs = System.currentTimeMillis() - startedAtMs,
+                    runCatching {
+                        if (file.exists()) file.delete()
+                        FileOutputStream(file, false).use { }
+                    }.onFailure { error ->
+                        Log.e(
+                            "AIHijack",
+                            "[$sourceTag] Failed to prepare thumbnail attempt $attempt: ${error.message}",
+                            error,
                         )
                     }
-                    return@launch
+
+                    Log.i(
+                        "ImageQuestionTransfer",
+                        "[$sourceTag] Starting thumbnail attempt $attempt/$IMAGE_THUMBNAIL_MAX_ATTEMPTS " +
+                            "file=${file.absolutePath} quality=${pendingImageThumbnailQuality.label}/" +
+                            pendingImageThumbnailQuality.sdkValue,
+                    )
+
+                    val valid = runCatching {
+                        receivePictureThumbnail(file, sourceTag, attempt)
+                    }.onFailure { error ->
+                        Log.e(
+                            "AIHijack",
+                            "[$sourceTag] Thumbnail attempt $attempt threw: ${error.message}",
+                            error,
+                        )
+                    }.getOrDefault(false)
+
+                    if (valid) {
+                        Log.i(
+                            "AIHijack",
+                            "[$sourceTag] Thumbnail attempt $attempt complete: " +
+                                "${file.absolutePath} (${file.length()} bytes)",
+                        )
+                        withContext(Dispatchers.Main) {
+                            onImageReadyForQuestion(
+                                imagePath = file.absolutePath,
+                                source = ImageQuestionSource.FAST_PREVIEW,
+                                transferDurationMs = System.currentTimeMillis() - startedAtMs,
+                            )
+                        }
+                        return@launch
+                    }
+
+                    runCatching { if (file.exists()) file.delete() }
+                    if (attempt < IMAGE_THUMBNAIL_MAX_ATTEMPTS) {
+                        Log.w(
+                            "ImageQuestionTransfer",
+                            "[$sourceTag] Thumbnail attempt $attempt failed; retrying after " +
+                                "${IMAGE_THUMBNAIL_RETRY_DELAY_MS}ms",
+                        )
+                        delay(IMAGE_THUMBNAIL_RETRY_DELAY_MS)
+                    }
                 }
 
-                clearPendingVoiceImageQuestion(sourceTag)
-                finishAiQuestionForegroundWork()
-                Log.w("AIHijack", "[$sourceTag] BLE preview did not complete")
-                runOnUiThread {
+                Log.w("AIHijack", "[$sourceTag] BLE preview failed after $IMAGE_THUMBNAIL_MAX_ATTEMPTS attempts")
+                withContext(Dispatchers.Main) {
+                    clearPendingVoiceImageQuestion(sourceTag)
+                    finishAiQuestionForegroundWork()
                     Toast.makeText(
                         this@MainActivity,
-                        "Fast preview transfer failed. Please try again.",
+                        "Fast preview transfer failed after retry. Please try again.",
                         Toast.LENGTH_LONG,
                     ).show()
                 }
             } finally {
                 imageThumbnailRequestInProgress.set(false)
-                if (!thumbnailTransferStarted) {
-                    GlassesSessionCoordinator.releaseBackgroundCommand(permit)
-                }
+                GlassesSessionCoordinator.releaseBackgroundCommand(permit)
             }
         }
     }
@@ -5132,7 +5168,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private suspend fun receivePictureThumbnail(
         file: File,
         sourceTag: String,
-        permit: BackgroundGlassesCommandPermit,
+        attempt: Int,
     ): Boolean {
         val gotChunk = java.util.concurrent.atomic.AtomicBoolean(false)
         val completed = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -5153,14 +5189,20 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     gotChunk.set(true)
                     totalBytes.addAndGet(dataBytes.toLong())
                 }.onFailure { error ->
-                    Log.e("AIHijack", "[$sourceTag] Failed to write thumbnail chunk: ${error.message}", error)
+                    Log.e(
+                        "AIHijack",
+                        "[$sourceTag] Attempt $attempt failed to write thumbnail chunk: ${error.message}",
+                        error,
+                    )
                 }
             }
+
             if (callbackIndex == 1 || callbackIndex % 32 == 0 || isComplete) {
                 Log.i(
                     "ImageQuestionTransfer",
-                    "[$sourceTag] Thumbnail callback #$callbackIndex packetType=$packetType complete=$isComplete " +
-                        "payloadBytes=$dataBytes totalBytes=${totalBytes.get()} " +
+                    "[$sourceTag] Thumbnail attempt $attempt callback #$callbackIndex " +
+                        "packetType=$packetType complete=$isComplete payloadBytes=$dataBytes " +
+                        "totalBytes=${totalBytes.get()} " +
                         "elapsedMs=${android.os.SystemClock.elapsedRealtime() - startedAtMs}",
                 )
             }
@@ -5168,32 +5210,33 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             if (isComplete && completed.compareAndSet(false, true)) {
                 Log.i(
                     "ImageQuestionTransfer",
-                    "[$sourceTag] Thumbnail completion received chunks=${callbackCount.get()} " +
-                        "bytes=${totalBytes.get()} hasData=${gotChunk.get()}",
+                    "[$sourceTag] Thumbnail attempt $attempt completion received " +
+                        "chunks=${callbackCount.get()} bytes=${totalBytes.get()} hasData=${gotChunk.get()}",
                 )
                 transferResult.complete(gotChunk.get())
-                GlassesSessionCoordinator.releaseBackgroundCommand(permit)
             }
         }
 
-        Log.i("AIHijack", "[$sourceTag] Requesting BLE thumbnail")
+        Log.i("AIHijack", "[$sourceTag] Requesting BLE thumbnail attempt $attempt")
         if (isGlassesCommandBlocked("AI thumbnail request")) return false
-        try {
-            LargeDataHandler.getInstance().getPictureThumbnails(thumbCallback)
-            Log.i("ImageQuestionTransfer", "[$sourceTag] getPictureThumbnails request submitted")
-        } catch (e: Exception) {
-            GlassesSessionCoordinator.releaseBackgroundCommand(permit)
-            throw e
-        }
+
+        LargeDataHandler.getInstance().getPictureThumbnails(thumbCallback)
+        Log.i(
+            "ImageQuestionTransfer",
+            "[$sourceTag] getPictureThumbnails attempt $attempt request submitted",
+        )
+
         val receivedAnyData = withTimeoutOrNull(IMAGE_THUMBNAIL_TRANSFER_TIMEOUT_MS) {
             transferResult.await()
         } ?: false
+
         if (!receivedAnyData) {
             Log.w(
                 "ImageQuestionTransfer",
-                "[$sourceTag] BLE thumbnail request timed out chunks=${callbackCount.get()} bytes=${totalBytes.get()} " +
-                    "completed=${completed.get()} connected=${BleOperateManager.getInstance().isConnected} " +
-                    "activeSession=${GlassesSessionCoordinator.currentSession()}; keeping SDK response slot isolated",
+                "[$sourceTag] BLE thumbnail attempt $attempt timed out " +
+                    "chunks=${callbackCount.get()} bytes=${totalBytes.get()} completed=${completed.get()} " +
+                    "connected=${BleOperateManager.getInstance().isConnected} " +
+                    "activeSession=${GlassesSessionCoordinator.currentSession()}",
             )
             return false
         }
@@ -5202,7 +5245,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             if (!valid) {
                 Log.w(
                     "AIHijack",
-                    "[$sourceTag] Thumbnail is not a decodable image (${file.length()} bytes)",
+                    "[$sourceTag] Thumbnail attempt $attempt is not a decodable image " +
+                        "(${file.length()} bytes)",
                 )
             }
         }
