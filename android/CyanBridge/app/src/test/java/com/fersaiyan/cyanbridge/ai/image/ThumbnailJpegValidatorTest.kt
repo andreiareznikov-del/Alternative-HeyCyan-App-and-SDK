@@ -1,5 +1,6 @@
 package com.fersaiyan.cyanbridge.ai.image
 
+import android.app.Application
 import java.io.File
 import java.util.Base64
 import org.junit.Assert.*
@@ -9,9 +10,11 @@ import org.junit.runner.RunWith
 import org.junit.rules.TemporaryFolder
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28], manifest = Config.NONE)
+@Config(sdk = [29], manifest = Config.NONE, application = Application::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ThumbnailJpegValidatorTest {
     @get:Rule val temporary = TemporaryFolder()
     private fun fixture(bytes: ByteArray): File = temporary.newFile().apply { writeBytes(bytes) }
