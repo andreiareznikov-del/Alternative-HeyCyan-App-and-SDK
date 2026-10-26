@@ -235,6 +235,10 @@ import com.fersaiyan.cyanbridge.ai.image.ImageAutomationTarget
 import com.fersaiyan.cyanbridge.ai.image.ImageQuestionBroadcast
 import com.fersaiyan.cyanbridge.ai.image.ImageQuestionSource
 import com.fersaiyan.cyanbridge.ai.image.ImageQuestionSourcePolicy
+import com.fersaiyan.cyanbridge.ai.image.BleThumbnailTransfer
+import com.fersaiyan.cyanbridge.ai.image.HeyCyanThumbnailTransport
+import com.fersaiyan.cyanbridge.ai.image.ThumbnailJpegValidator
+import com.fersaiyan.cyanbridge.ai.image.W610PreviewStore
 import com.fersaiyan.cyanbridge.ai.image.ImageThumbnailQuality
 import com.fersaiyan.cyanbridge.ai.AiQuestionForegroundService
 import com.fersaiyan.cyanbridge.ai.image.HighQualityFailureChoice
@@ -580,6 +584,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     )
     private val activeVoiceAudioRoute = AtomicReference<VoiceAudioRouteOwner?>(null)
     private val imageThumbnailRequestInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
+    private var imageThumbnailTransferJob: Job? = null
     private val imageCaptureAwaitingNotification = java.util.concurrent.atomic.AtomicBoolean(false)
     private val metaPhotoCaptureInProgress = java.util.concurrent.atomic.AtomicBoolean(false)
     private val pendingImageCapturePermit = AtomicReference<BackgroundGlassesCommandPermit?>(null)
@@ -588,6 +593,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var pendingImageQuestionSource = ImageQuestionSourcePolicy.defaultSource()
     private var pendingImageThumbnailQuality = ImageQuestionSourcePolicy.defaultThumbnailQuality()
     private var pendingImageCaptureStartedAtMs: Long = 0L
+    @Volatile
+    private var lastImagePhotoReadyElapsedMs: Long = 0L
     private var mediaDownloadPurpose = MediaDownloadPurpose.FULL_SYNC
     private var highQualityImageRequest: HighQualityImageRequest? = null
     private var lastImageQueryAtMs: Long = 0L
@@ -3929,6 +3936,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             otaManager.onBluetoothConnected()
             requestBatteryStatus(showToast = false)
         } else {
+            imageThumbnailTransferJob?.cancel()
+            imageThumbnailTransferJob = null
+            lastImagePhotoReadyElapsedMs = 0L
             val expectedOtaReconnect = otaManager.isAwaitingFreshBleReadiness
             val otaWasActive = otaManager.isActive
             val otaPreparationWasActive = otaPreparationJob?.isActive == true
@@ -4748,6 +4758,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
             pendingImageCaptureSourceTag = sourceTag
             pendingImageCapturePermit.set(permit)
+            lastImagePhotoReadyElapsedMs = 0L
             Toast.makeText(this, "Triggering glasses camera…", Toast.LENGTH_SHORT).show()
             CoroutineScope(Dispatchers.IO).launch {
                 try {
@@ -4817,20 +4828,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         pendingImageQuestionOfferSpokenQuestion = false
         Log.i(
             "ImageQuestionAudio",
-            "[$sourceTag] Photo ready; starting parallel question window " +
-                "offerSpokenQuestion=$offerSpokenQuestion",
+            "[$sourceTag] Photo ready; starting image-question flow; offerSpokenQuestion=$offerSpokenQuestion",
         )
-        
-            
-            startParallelAudioQuestionIfEligible(offerSpokenQuestion)
-            when (pendingImageQuestionSource) {
-                ImageQuestionSource.HIGH_QUALITY -> requestHighQualityImageForQuestion(sourceTag)
-            ImageQuestionSource.FAST_PREVIEW -> lifecycleScope.launch {
-    delay(250L)
-    requestImageThumbnailForQuestion(sourceTag)
-}
-            }
-        
+        startParallelAudioQuestionIfEligible(offerSpokenQuestion)
+        when (pendingImageQuestionSource) {
+            ImageQuestionSource.HIGH_QUALITY -> requestHighQualityImageForQuestion(sourceTag)
+            ImageQuestionSource.FAST_PREVIEW -> requestImageThumbnailForQuestion(sourceTag)
+        }
     }
 
     private fun captureMetaImageForQuestion(sourceTag: String) {
@@ -5069,151 +5073,70 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun requestImageThumbnailForQuestion(sourceTag: String) {
         if (isGlassesCommandBlocked("AI thumbnail request")) return
-        val permit = pendingImageCapturePermit.getAndSet(null)
-            ?: acquireBackgroundGlassesCommand("AI thumbnail request")
-            ?: return
         if (!imageThumbnailRequestInProgress.compareAndSet(false, true)) {
-            GlassesSessionCoordinator.releaseBackgroundCommand(permit)
             Log.i("AIHijack", "[$sourceTag] Thumbnail request already in progress")
             return
         }
-
-        val outDir = getExternalFilesDir("DCIM") ?: filesDir
-        val file = File(outDir, "AI_Thumb_${sourceTag}_${System.currentTimeMillis()}.jpg")
-        runCatching {
-            file.parentFile?.mkdirs()
-            if (file.exists()) file.delete()
-        }
-
-        val startedAtMs = System.currentTimeMillis()
-        Log.i(
-            "ImageQuestionTransfer",
-            "[$sourceTag] Starting thumbnail transfer file=${file.absolutePath} " +
-                "quality=${pendingImageThumbnailQuality.label}/${pendingImageThumbnailQuality.sdkValue}",
-        )
-        CoroutineScope(Dispatchers.IO).launch {
-            var thumbnailTransferStarted = false
-            try {
-                runCatching {
-                    FileOutputStream(file, false).use { }
-                }.onFailure { error ->
-                    Log.e("AIHijack", "[$sourceTag] Failed to prepare thumbnail file: ${error.message}", error)
-                }
-
-                thumbnailTransferStarted = true
-                if (receivePictureThumbnail(file, sourceTag, permit)) {
-                    Log.i(
-                        "AIHijack",
-                        "[$sourceTag] Thumbnail transfer complete: ${file.absolutePath} (${file.length()} bytes)",
-                    )
-                    withContext(Dispatchers.Main) {
-                        onImageReadyForQuestion(
-                            imagePath = file.absolutePath,
-                            source = ImageQuestionSource.FAST_PREVIEW,
-                            transferDurationMs = System.currentTimeMillis() - startedAtMs,
-                        )
-                    }
-                    return@launch
-                }
-
-                clearPendingVoiceImageQuestion(sourceTag)
-                finishAiQuestionForegroundWork()
-                Log.w("AIHijack", "[$sourceTag] BLE preview did not complete")
-                runOnUiThread {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Fast preview transfer failed. Please try again.",
-                        Toast.LENGTH_LONG,
-                    ).show()
-                }
-            } finally {
-                imageThumbnailRequestInProgress.set(false)
-                if (!thumbnailTransferStarted) {
-                    GlassesSessionCoordinator.releaseBackgroundCommand(permit)
-                }
-            }
-        }
-    }
-
-    private suspend fun receivePictureThumbnail(
-        file: File,
-        sourceTag: String,
-        permit: BackgroundGlassesCommandPermit,
-    ): Boolean {
-        val gotChunk = java.util.concurrent.atomic.AtomicBoolean(false)
-        val completed = java.util.concurrent.atomic.AtomicBoolean(false)
-        val callbackCount = java.util.concurrent.atomic.AtomicInteger(0)
-        val totalBytes = java.util.concurrent.atomic.AtomicLong(0L)
-        val transferResult = CompletableDeferred<Boolean>()
-        val writeLock = Any()
+        val photoReadyAtMs = lastImagePhotoReadyElapsedMs
         val startedAtMs = android.os.SystemClock.elapsedRealtime()
-
-        val thumbCallback: (Int, Boolean, ByteArray?) -> Unit = { packetType, isComplete, data ->
-            val callbackIndex = callbackCount.incrementAndGet()
-            val dataBytes = data?.size ?: 0
-            if (data != null && data.isNotEmpty()) {
-                runCatching {
-                    synchronized(writeLock) {
-                        FileOutputStream(file, true).use { it.write(data) }
-                    }
-                    gotChunk.set(true)
-                    totalBytes.addAndGet(dataBytes.toLong())
-                }.onFailure { error ->
-                    Log.e("AIHijack", "[$sourceTag] Failed to write thumbnail chunk: ${error.message}", error)
+        // Start the ownership block immediately, even if the lifecycle is already cancelled.
+        // The receiver owns release on success, exceptions, timeout, and cancellation.
+        imageThumbnailTransferJob = lifecycleScope.launch(Dispatchers.IO, start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            var delivered = false
+            try {
+                val directory = getExternalFilesDir("DCIM") ?: filesDir
+                val prefix = "AI_Thumb_${sourceTag.replace(Regex("[^A-Za-z0-9_-]"), "_")}_${java.util.UUID.randomUUID()}"
+                val permit = pendingImageCapturePermit.getAndSet(null)
+                    ?: acquireBackgroundGlassesCommand("AI thumbnail request")
+                    ?: return@launch
+                val transfer = BleThumbnailTransfer(
+                    transport = HeyCyanThumbnailTransport(),
+                    connectionReady = {
+                        BleOperateManager.getInstance().isConnected &&
+                            GlassesSessionCoordinator.canRequestThumbnail(permit)
+                    },
+                    requireReconnect = { GlassesSessionCoordinator.requireThumbnailReconnect(permit) },
+                    validateJpeg = ThumbnailJpegValidator::isValid,
+                    clockMs = android.os.SystemClock::elapsedRealtime,
+                    log = { message -> Log.i("ImageQuestionTransfer", "[$sourceTag] $message") },
+                    timeoutMs = IMAGE_THUMBNAIL_TRANSFER_TIMEOUT_MS,
+                )
+                val file = transfer.receive(
+                    directory = directory,
+                    filenamePrefix = prefix,
+                    photoReadyAtMs = photoReadyAtMs,
+                    releasePermit = { GlassesSessionCoordinator.releaseBackgroundCommand(permit) },
+                ) ?: return@launch
+                withContext(Dispatchers.Main) {
+                    onImageReadyForQuestion(
+                        imagePath = file.absolutePath,
+                        source = ImageQuestionSource.FAST_PREVIEW,
+                        transferDurationMs = android.os.SystemClock.elapsedRealtime() - startedAtMs,
+                    )
+                    delivered = true
                 }
-            }
-            if (callbackIndex == 1 || callbackIndex % 32 == 0 || isComplete) {
-                Log.i(
-                    "ImageQuestionTransfer",
-                    "[$sourceTag] Thumbnail callback #$callbackIndex packetType=$packetType complete=$isComplete " +
-                        "payloadBytes=$dataBytes totalBytes=${totalBytes.get()} " +
-                        "elapsedMs=${android.os.SystemClock.elapsedRealtime() - startedAtMs}",
-                )
-            }
-
-            if (isComplete && completed.compareAndSet(false, true)) {
-                Log.i(
-                    "ImageQuestionTransfer",
-                    "[$sourceTag] Thumbnail completion received chunks=${callbackCount.get()} " +
-                        "bytes=${totalBytes.get()} hasData=${gotChunk.get()}",
-                )
-                transferResult.complete(gotChunk.get())
-                GlassesSessionCoordinator.releaseBackgroundCommand(permit)
-            }
-        }
-
-        Log.i("AIHijack", "[$sourceTag] Requesting BLE thumbnail")
-        if (isGlassesCommandBlocked("AI thumbnail request")) {
-        
-            return false
-        }
-        try {
-            LargeDataHandler.getInstance().getPictureThumbnails(thumbCallback)
-            Log.i("ImageQuestionTransfer", "[$sourceTag] getPictureThumbnails request submitted")
-        } catch (e: Exception) {
-            GlassesSessionCoordinator.releaseBackgroundCommand(permit)
-            throw e
-        }
-        val receivedAnyData = withTimeoutOrNull(IMAGE_THUMBNAIL_TRANSFER_TIMEOUT_MS) {
-            transferResult.await()
-        } ?: false
-        if (!receivedAnyData) {
-            Log.w(
-                "ImageQuestionTransfer",
-                "[$sourceTag] BLE thumbnail request timed out chunks=${callbackCount.get()} bytes=${totalBytes.get()} " +
-                    "completed=${completed.get()} connected=${BleOperateManager.getInstance().isConnected} " +
-                    "activeSession=${GlassesSessionCoordinator.currentSession()}; keeping SDK response slot isolated",
-            )
-        
-            return false
-        }
-
-        return isDecodableImageFile(file).also { valid ->
-            if (!valid) {
-                Log.w(
-                    "AIHijack",
-                    "[$sourceTag] Thumbnail is not a decodable image (${file.length()} bytes)",
-                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Log.e("ImageQuestionTransfer", "[$sourceTag] Preview failed: ${error.message}", error)
+            } finally {
+                try {
+                    if (!delivered) {
+                        withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                            clearPendingVoiceImageQuestion(sourceTag)
+                            finishAiQuestionForegroundWork()
+                            if (!isFinishing && !isDestroyed) {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Preview not received. If timed out, reconnect the glasses and try again.",
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                        }
+                    }
+                } finally {
+                    imageThumbnailRequestInProgress.set(false)
+                }
             }
         }
     }
@@ -5271,6 +5194,24 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             Toast.makeText(this, transferSummary, Toast.LENGTH_LONG).show()
         }
         if (BuildConfig.APPLICATION_ID == "com.fersaiyan.cyanbridge.w610test") {
+            lifecycleScope.launch(Dispatchers.IO) {
+                val galleryUri = runCatching { W610PreviewStore.save(this@MainActivity, imageFile) }
+                    .onFailure { Log.e("ImageQuestionTransfer", "Gallery save failed", it) }
+                    .getOrNull()
+                Log.i(
+                    "ImageQuestionTransfer",
+                    "W610_PREVIEW_OK decoded=true bytes=${metrics.bytes} " +
+                        "dimensions=${metrics.width}x${metrics.height} path=$imagePath galleryUri=$galleryUri",
+                )
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        if (galleryUri != null) "W610 JPEG OK: saved to Gallery / CyanBridge W610"
+                        else "W610 JPEG OK: saved in app storage; Gallery copy failed",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
             finishAiQuestionForegroundWork()
             return
         }
@@ -11944,6 +11885,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 Log.d("DeviceNotify", "Skipping general device-notify handling during OTA")
                 return
             }
+            if (response.loadData.size < 7) {
+                Log.w("DeviceNotify", "Ignoring short notify frame: ${response.loadData.size} bytes")
+                return
+            }
             when (response.loadData[6].toInt()) {
                 //Glasses battery report
                 0x05 -> {
@@ -11959,6 +11904,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                         Log.i("DeviceNotify", "Walking Aid consumed its requested photo-ready notification")
                         return
                     }
+                    lastImagePhotoReadyElapsedMs = android.os.SystemClock.elapsedRealtime()
                     val appRequestedCapture = imageCaptureAwaitingNotification.get()
                     val sourceTag = pendingImageCaptureSourceTag ?: "hardware_image_button"
                     Log.i(

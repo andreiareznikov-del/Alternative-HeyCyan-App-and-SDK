@@ -2,14 +2,21 @@ name: W610 APK
 on:
   workflow_dispatch:
   push:
-    branches: [w610-thumbnail-fix]
+    branches: [w610-thumbnail-fix, w610-ble-preview-integration]
+permissions:
+  contents: read
+concurrency:
+  group: w610-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          lfs: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -17,12 +24,49 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
-      - run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
-      - working-directory: android/CyanBridge
+      - name: Check existing Meta SDK build credential
         env:
           META_GITHUB_TOKEN: ${{ secrets.META_GITHUB_TOKEN }}
-        run: chmod +x gradlew && ./gradlew --no-daemon --stacktrace :app:assembleDebug
+        run: |
+          if [ -z "$META_GITHUB_TOKEN" ]; then
+            echo "::error::This source tree requires the Meta SDK. Configure META_GITHUB_TOKEN with package read access."
+            exit 1
+          fi
+      - run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Unit tests and ARM64 W610 test APK
+        working-directory: android/CyanBridge
+        env:
+          META_GITHUB_TOKEN: ${{ secrets.META_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ""
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace --max-workers=2 -PtestAbi=arm64-v8a \
+            :app:testDebugUnitTest \
+            --tests 'com.fersaiyan.cyanbridge.ai.image.BleThumbnailTransferTest' \
+            --tests 'com.fersaiyan.cyanbridge.ai.image.ThumbnailJpegValidatorTest' \
+            --tests 'com.fersaiyan.cyanbridge.glasses.GlassesSessionCoordinatorTest' \
+            :app:assembleDebug
+      - name: Verify package, signature, and checksum
+        working-directory: android/CyanBridge
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk | head -5
+          sha256sum app/build/outputs/apk/debug/app-debug.apk > app/build/outputs/apk/debug/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: w610-apk
-          path: android/CyanBridge/app/build/outputs/apk/debug/app-debug.apk
+          name: CyanBridge-W610-Integration
+          path: |
+            android/CyanBridge/app/build/outputs/apk/debug/app-debug.apk
+            android/CyanBridge/app/build/outputs/apk/debug/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: W610-unit-test-reports
+          path: |
+            android/CyanBridge/app/build/reports/tests/testDebugUnitTest
+            android/CyanBridge/app/build/test-results/testDebugUnitTest
+          if-no-files-found: ignore
+          retention-days: 30
