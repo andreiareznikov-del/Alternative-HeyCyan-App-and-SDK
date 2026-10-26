@@ -24,6 +24,7 @@ object GlassesSessionCoordinator {
     private var nextSessionId = 0L
     private var nextBackgroundCommandId = 0L
     private val activeBackgroundCommandIds = mutableSetOf<Long>()
+    private var thumbnailReconnectRequired = false
 
     @Synchronized
     fun tryAcquire(session: GlassesSession): Boolean {
@@ -82,10 +83,21 @@ object GlassesSessionCoordinator {
     fun isBackgroundCommandActive(permit: BackgroundGlassesCommandPermit): Boolean =
         permit.id in activeBackgroundCommandIds
 
+    @Synchronized
+    fun canRequestThumbnail(permit: BackgroundGlassesCommandPermit): Boolean =
+        permit.id in activeBackgroundCommandIds && !thumbnailReconnectRequired
+
+    /** A timed-out 0xFD reply has no request ID and must not be routed to a new preview. */
+    @Synchronized
+    fun requireThumbnailReconnect(permit: BackgroundGlassesCommandPermit) {
+        if (permit.id in activeBackgroundCommandIds) thumbnailReconnectRequired = true
+    }
+
     /** A BLE reconnect discards any vendor callback slot that may have been left pending. */
     @Synchronized
     fun clearBackgroundCommands() {
         activeBackgroundCommandIds.clear()
+        thumbnailReconnectRequired = false
     }
 
     /** A real BLE disconnect invalidates every pending vendor response and P2P workflow. */
@@ -93,5 +105,6 @@ object GlassesSessionCoordinator {
     fun clearForDisconnectedDevice() {
         activeLease = null
         activeBackgroundCommandIds.clear()
+        thumbnailReconnectRequired = false
     }
 }

@@ -8,6 +8,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GlassesSessionCoordinatorTest {
+    @Test
+    fun unfinishedThumbnailBlocksNewPreviewButReleasesGeneralCommandPermit() {
+        val first = requireNotNull(GlassesSessionCoordinator.tryAcquireBackgroundCommand())
+        GlassesSessionCoordinator.requireThumbnailReconnect(first)
+        GlassesSessionCoordinator.releaseBackgroundCommand(first)
+        val next = requireNotNull(GlassesSessionCoordinator.tryAcquireBackgroundCommand())
+        assertFalse(GlassesSessionCoordinator.canRequestThumbnail(next))
+        GlassesSessionCoordinator.clearForDisconnectedDevice()
+        val reconnected = requireNotNull(GlassesSessionCoordinator.tryAcquireBackgroundCommand())
+        assertTrue(GlassesSessionCoordinator.canRequestThumbnail(reconnected))
+        GlassesSessionCoordinator.requireThumbnailReconnect(first)
+        assertTrue(GlassesSessionCoordinator.canRequestThumbnail(reconnected))
+    }
+
     @After
     fun releaseAnyHeldSession() {
         GlassesSessionCoordinator.clearForDisconnectedDevice()
