@@ -21,9 +21,10 @@ class MinimalManifestTest {
         val info = app.packageManager.getPackageInfo(app.packageName, PackageManager.GET_PERMISSIONS)
         val allowed = setOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN,
             "${app.packageName}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION")
-        assertTrue(info.requestedPermissions.toSet().all { it in allowed })
-        assertTrue(info.requestedPermissions.contains(Manifest.permission.BLUETOOTH_SCAN))
-        assertTrue(info.requestedPermissions.contains(Manifest.permission.BLUETOOTH_CONNECT))
+        val requested = requireNotNull(info.requestedPermissions).toSet()
+        assertTrue(requested.all { it in allowed })
+        assertTrue(Manifest.permission.BLUETOOTH_SCAN in requested)
+        assertTrue(Manifest.permission.BLUETOOTH_CONNECT in requested)
     }
     @Test fun noServicesProvidersOrManifestReceivers() {
         val flags = PackageManager.GET_SERVICES or PackageManager.GET_PROVIDERS or PackageManager.GET_RECEIVERS
@@ -35,7 +36,8 @@ class MinimalManifestTest {
     @Test fun uniquePackageAndSingleLauncherActivity() {
         assertEquals("com.fersaiyan.cyanbridge.w610jpegtest", app.packageName)
         val info = app.packageManager.getPackageInfo(app.packageName, PackageManager.GET_ACTIVITIES)
-        assertEquals(1, info.activities.size)
-        assertEquals(JpegTestActivity::class.java.name, info.activities.single().name)
+        val activities = requireNotNull(info.activities)
+        assertEquals(1, activities.size)
+        assertEquals(JpegTestActivity::class.java.name, activities.single().name)
     }
 }

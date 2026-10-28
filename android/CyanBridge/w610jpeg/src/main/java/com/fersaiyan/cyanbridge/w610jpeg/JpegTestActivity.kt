@@ -33,6 +33,7 @@ import com.fersaiyan.cyanbridge.glasses.GlassesSessionCoordinator
 import com.oudmon.ble.base.bluetooth.BleAction
 import com.oudmon.ble.base.bluetooth.BleBaseControl
 import com.oudmon.ble.base.bluetooth.BleOperateManager
+import com.oudmon.ble.base.bluetooth.DeviceManager
 import com.oudmon.ble.base.bluetooth.QCBluetoothCallbackCloneReceiver
 import com.oudmon.ble.base.communication.LargeDataHandler
 import com.oudmon.ble.base.communication.bigData.resp.GlassModelControlResponse
@@ -180,12 +181,15 @@ class JpegTestActivity : Activity() {
     private fun initializeSdk() {
         if (initialized) return
         check(hasNearby())
-        BleOperateManager.getInstance(application).setApplication(application)
-        BleBaseControl.getInstance(application).setmContext(application)
+        if (!sdkInitialized) {
+            BleOperateManager.getInstance(application).setApplication(application)
+            BleBaseControl.getInstance(application).setmContext(application)
+            manager.init()
+            sdkInitialized = true
+        }
         LocalBroadcastManager.getInstance(this).registerReceiver(connectionReceiver, BleAction.getIntentFilter())
         initialized = true
         sdk.addOutDeviceListener(LISTENER_ID, photoListener)
-        manager.init()
     }
 
     private fun findGlasses() {
@@ -224,6 +228,8 @@ class JpegTestActivity : Activity() {
             operation?.cancelAndJoin() // Old callback cleanup must finish before the new link.
             if (!foreground || !hasNearby()) return@launch
             try {
+                DeviceManager.getInstance().deviceName = device.name ?: "W610"
+                DeviceManager.getInstance().deviceAddress = device.address
                 manager.connectDirectly(device.address)
                 note("Подключение к ${device.name ?: "W610"}…")
                 connectionTimeout = scope.launch {
@@ -322,7 +328,11 @@ class JpegTestActivity : Activity() {
     private fun disconnect() {
         stopScan()
         if (initialized && hasNearby()) {
-            runCatching { manager.setNeedConnect(false); manager.disconnect() }
+            runCatching {
+                manager.setNeedConnect(false)
+                BleBaseControl.getInstance().setNeedReconnect(false)
+                manager.disconnect()
+            }
         }
         if (::shutter.isInitialized) connectionLost("BLE отключён")
     }
@@ -393,5 +403,8 @@ class JpegTestActivity : Activity() {
         private const val ENABLE_BT = 2
         private const val EXPORT_LOG = 3
         private const val LISTENER_ID = 610
+        // SDK init registers singleton packet parsers. Re-registering after Activity
+        // recreation duplicates packets and corrupts thumbnails, so initialize once/process.
+        private var sdkInitialized = false
     }
 }
