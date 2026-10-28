@@ -68,8 +68,8 @@ jobs:
           Path('audit/tests.json').write_text(json.dumps(dict(totals=totals,suites=suites),indent=2))
           print(totals)
           PY
-          sha256sum "$JPEG_APK" > audit/SHA256SUMS.txt
           cp "$JPEG_APK" audit/CyanBridge-W610-JPEG-Minimal.apk
+          (cd audit && sha256sum CyanBridge-W610-JPEG-Minimal.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
           name: CyanBridge-W610-JPEG-Minimal
@@ -84,4 +84,7 @@ jobs:
           path: |
             android/CyanBridge/w610jpeg/build/reports/
             android/CyanBridge/w610jpeg/build/test-results/
+            android/CyanBridge/w610jpeg/build/intermediates/merged_manifest/**/AndroidManifest.xml
+            android/CyanBridge/w610jpeg/build/intermediates/merged_manifests/**/AndroidManifest.xml
+            android/CyanBridge/w610jpeg/build/outputs/logs/manifest-merger-debug-report.txt
           retention-days: 30

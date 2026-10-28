@@ -29,9 +29,9 @@ class MinimalManifestTest {
     @Test fun noServicesProvidersOrManifestReceivers() {
         val flags = PackageManager.GET_SERVICES or PackageManager.GET_PROVIDERS or PackageManager.GET_RECEIVERS
         val info = app.packageManager.getPackageInfo(app.packageName, flags)
-        assertTrue(info.services.isNullOrEmpty())
-        assertTrue(info.receivers.isNullOrEmpty())
-        assertTrue(info.providers.isNullOrEmpty())
+        assertTrue("Unexpected services: ${info.services?.map { it.name }}", info.services.isNullOrEmpty())
+        assertTrue("Unexpected receivers: ${info.receivers?.map { it.name }}", info.receivers.isNullOrEmpty())
+        assertTrue("Unexpected providers: ${info.providers?.map { it.name }}", info.providers.isNullOrEmpty())
     }
     @Test fun uniquePackageAndSingleLauncherActivity() {
         assertEquals("com.fersaiyan.cyanbridge.w610jpegtest", app.packageName)
