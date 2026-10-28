@@ -1,0 +1,87 @@
+name: W610 JPEG minimal
+on:
+  workflow_dispatch:
+  push:
+    branches: [w610-jpeg-minimal]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: w610-jpeg-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  jpeg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: All harness unit tests, lint, signed APK
+        working-directory: android/CyanBridge
+        env:
+          GITHUB_TOKEN: ""
+          META_GITHUB_TOKEN: ""
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace --max-workers=2 \
+            :w610jpeg:testDebugUnitTest :w610jpeg:lintDebug :w610jpeg:assembleDebug
+      - name: Verify main application and prior W610 fixes are unchanged
+        run: |
+          git diff --exit-code e2aa1094001214c83ca26e3e466501f92a9f448c -- android/CyanBridge/app
+          python3 -m unittest discover -s tools -p 'test_w610_jpeg_manifest.py' -v
+      - name: Download prior APK for actual manifest comparison
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 40403052790
+          name: CyanBridge-W610-Integration
+          path: baseline
+      - name: Verify final APK, manifest and signature
+        run: |
+          mkdir -p audit
+          JPEG_APK=android/CyanBridge/w610jpeg/build/outputs/apk/debug/w610jpeg-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$JPEG_APK" | tee audit/signature.txt
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$JPEG_APK" > audit/badging.txt
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$JPEG_APK" > audit/AndroidManifest.xml
+          python3 tools/w610_jpeg_manifest.py audit/AndroidManifest.xml --check > audit/manifest-sdk-check.json
+          python3 tools/w610_jpeg_manifest.py "$JPEG_APK" --check > audit/manifest-apk-check.json
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print baseline/app-debug.apk > audit/previous-AndroidManifest.xml
+          python3 tools/w610_jpeg_manifest.py audit/previous-AndroidManifest.xml > audit/previous-manifest-audit.json
+          python3 - <<'PY'
+          import json,xml.etree.ElementTree as ET
+          from pathlib import Path
+          root=Path('android/CyanBridge/w610jpeg/build/test-results/testDebugUnitTest')
+          totals={k:0 for k in ['tests','failures','errors','skipped']}
+          suites=[]
+          for p in root.glob('TEST-*.xml'):
+              r=ET.parse(p).getroot(); suites.append(dict(r.attrib))
+              for k in totals: totals[k]+=int(r.get(k,'0'))
+          assert totals['tests'] >= 38 and totals['failures']==totals['errors']==totals['skipped']==0,totals
+          assert any(s['name'].endswith('ThumbnailJpegValidatorTest') and s['tests']=='5' for s in suites)
+          Path('audit/tests.json').write_text(json.dumps(dict(totals=totals,suites=suites),indent=2))
+          print(totals)
+          PY
+          sha256sum "$JPEG_APK" > audit/SHA256SUMS.txt
+          cp "$JPEG_APK" audit/CyanBridge-W610-JPEG-Minimal.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CyanBridge-W610-JPEG-Minimal
+          path: audit/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload all unit tests and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: W610-JPEG-test-reports
+          path: |
+            android/CyanBridge/w610jpeg/build/reports/
+            android/CyanBridge/w610jpeg/build/test-results/
+          retention-days: 30

@@ -47,6 +47,8 @@ dependencyResolutionManagement {
 rootProject.name = "CyanBridgeManagerApp"
 include(":app")
 include(":shared")
+// Foreground-only W610 JPEG harness; does not depend on the full application.
+include(":w610jpeg")
 
 // HeyCyan Core - bundled as composite build for easy compilation
 val heycyanCoreDir = file("../../heycyan-core")

@@ -1,0 +1,72 @@
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+}
+
+// Compile the existing receiver/validator/coordinator verbatim. No fork of transport logic.
+def sharedFiles = [
+    'com/fersaiyan/cyanbridge/ai/image/BleThumbnailTransfer.kt',
+    'com/fersaiyan/cyanbridge/ai/image/HeyCyanThumbnailTransport.kt',
+    'com/fersaiyan/cyanbridge/ai/image/ThumbnailJpegValidator.kt',
+    'com/fersaiyan/cyanbridge/ai/image/W610PreviewStore.kt',
+    'com/fersaiyan/cyanbridge/glasses/GlassesSessionCoordinator.kt',
+]
+def sharedTests = [
+    'com/fersaiyan/cyanbridge/ai/image/BleThumbnailTransferTest.kt',
+    'com/fersaiyan/cyanbridge/ai/image/ThumbnailJpegValidatorTest.kt',
+    'com/fersaiyan/cyanbridge/glasses/GlassesSessionCoordinatorTest.kt',
+]
+def copyMain = tasks.register('copyW610Transport', Sync) {
+    from('../app/src/main/java') { include(sharedFiles) }
+    into(layout.buildDirectory.dir('generated/w610/main'))
+}
+def copyTests = tasks.register('copyW610Tests', Sync) {
+    from('../app/src/test/java') { include(sharedTests) }
+    into(layout.buildDirectory.dir('generated/w610/test'))
+    // This harness requires Android 12+. Change only the Robolectric runtime;
+    // all 26 assertions/tests remain the same as the integration application.
+    filesMatching('**/ThumbnailJpegValidatorTest.kt') {
+        filter { line -> line.replace('@Config(sdk = [29]', '@Config(sdk = [32]') }
+    }
+}
+
+android {
+    namespace 'com.fersaiyan.cyanbridge.w610jpeg'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'com.fersaiyan.cyanbridge.w610jpegtest'
+        minSdk 31
+        targetSdk 36
+        versionCode 1
+        versionName '1.0-jpeg-test'
+    }
+    buildTypes {
+        debug {
+            // A test certificate, with production-style non-debuggable runtime.
+            debuggable false
+            signingConfig signingConfigs.debug
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    sourceSets {
+        main.java.srcDir(layout.buildDirectory.dir('generated/w610/main'))
+        test.java.srcDir(layout.buildDirectory.dir('generated/w610/test'))
+    }
+    testOptions { unitTests.includeAndroidResources = true }
+}
+tasks.named('preBuild') { dependsOn(copyMain, copyTests) }
+
+dependencies {
+    implementation files('../app/libs/glasses_sdk_20250723_v01.aar')
+    // The vendor AAR references these two AndroidX packages, and no other SDKs.
+    implementation 'androidx.core:core:1.15.0'
+    implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.1.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0'
+    testImplementation 'org.robolectric:robolectric:4.12.2'
+}
