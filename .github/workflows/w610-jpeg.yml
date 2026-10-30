@@ -2,7 +2,7 @@ name: W610 JPEG minimal
 on:
   workflow_dispatch:
   push:
-    branches: [w610-jpeg-minimal]
+    branches: [w610-jpeg-minimal, w610-jpeg-diagnostics]
 permissions:
   contents: read
   actions: read

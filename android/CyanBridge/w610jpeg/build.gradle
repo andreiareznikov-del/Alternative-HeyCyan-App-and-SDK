@@ -37,8 +37,8 @@ android {
         applicationId 'com.fersaiyan.cyanbridge.w610jpegtest'
         minSdk 31
         targetSdk 36
-        versionCode 1
-        versionName '1.0-jpeg-test'
+        versionCode 2
+        versionName '1.1-jpeg-diagnostics'
     }
     buildTypes {
         debug {

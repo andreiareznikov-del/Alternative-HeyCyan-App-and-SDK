@@ -36,7 +36,6 @@ import com.oudmon.ble.base.bluetooth.BleOperateManager
 import com.oudmon.ble.base.bluetooth.DeviceManager
 import com.oudmon.ble.base.bluetooth.QCBluetoothCallbackCloneReceiver
 import com.oudmon.ble.base.communication.LargeDataHandler
-import com.oudmon.ble.base.communication.bigData.resp.GlassModelControlResponse
 import com.oudmon.ble.base.communication.bigData.resp.GlassesDeviceNotifyListener
 import com.oudmon.ble.base.communication.bigData.resp.GlassesDeviceNotifyRsp
 import java.io.File
@@ -96,9 +95,19 @@ class JpegTestActivity : Activity() {
         }
     }
 
+    private var rawNotifications = 0
     private val connectionReceiver = object : QCBluetoothCallbackCloneReceiver() {
         override fun connectStatue(device: BluetoothDevice?, connected: Boolean) {
             if (!connected) runOnUiThread { if (!closed) connectionLost("BLE отключён") }
+        }
+        override fun onCharacteristicChange(address: String?, uuid: String?, data: ByteArray?) {
+            // Raw transport visibility only: never dump payload, address or characteristic UUID.
+            val size = data?.size ?: 0
+            runOnUiThread {
+                rawNotifications++
+                if (rawNotifications <= 8 || rawNotifications % 32 == 0)
+                    note("BLE raw notify count=$rawNotifications packetLength=$size ready=$ready busy=$busy")
+            }
         }
         override fun onServiceDiscovered() {
             runOnUiThread {
@@ -120,10 +129,17 @@ class JpegTestActivity : Activity() {
 
     private val photoListener = object : GlassesDeviceNotifyListener() {
         override fun parseData(cmdType: Int, response: GlassesDeviceNotifyRsp) {
-            val signal = PhotoSignal.fromNotify(response.loadData) ?: return
+            val data = response.loadData
+            val signal = PhotoSignal.fromNotify(data)
+            val event = data.getOrNull(6)?.toInt()?.and(0xFF)
+            // Only the documented event discriminator and button subtype are exposed.
+            val subtype = if (event == 3) data.getOrNull(7)?.toInt()?.and(0xFF) else null
             val arrivedAt = SystemClock.elapsedRealtime()
             runOnUiThread {
-                if (closed || !ready) return@runOnUiThread
+                note("BLE deviceNotify cmdType=$cmdType packetLength=${data.size} event=$event buttonSubtype=$subtype " +
+                    "ready=$ready busy=$busy awaitingReady=${readyWaiter != null} " +
+                    "decision=${if (closed || !ready) "inactive" else if (signal == null) "unhandled-or-short" else signal.name}")
+                if (closed || !ready || signal == null) return@runOnUiThread
                 when (signal) {
                     PhotoSignal.READY -> {
                         note("photo-ready 0x02")
@@ -173,7 +189,7 @@ class JpegTestActivity : Activity() {
         journal = TextView(this).apply { textSize = 11f; setTextIsSelectable(true) }
         column.addView(journal)
         setContentView(ScrollView(this).apply { addView(column) })
-        note("JPEG-only build 1.0; Android ${android.os.Build.VERSION.SDK_INT}")
+        note("JPEG diagnostics build 1.1; Android ${android.os.Build.VERSION.SDK_INT}")
     }
 
     private fun hasNearby() = NEARBY.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
@@ -231,7 +247,7 @@ class JpegTestActivity : Activity() {
                 DeviceManager.getInstance().deviceName = device.name ?: "W610"
                 DeviceManager.getInstance().deviceAddress = device.address
                 manager.connectDirectly(device.address)
-                note("Подключение к ${device.name ?: "W610"}…")
+                note("Подключение к выбранным очкам…")
                 connectionTimeout = scope.launch {
                     delay(25_000)
                     if (!ready) { note("Нет ответа BLE. Проверьте выбор очков и остановите другие приложения очков."); disconnect() }
@@ -241,8 +257,14 @@ class JpegTestActivity : Activity() {
     }
 
     private fun startPhoto(photoReadyAt: Long?) {
-        if (busy || !ready || !hasNearby() || !manager.isConnected) return
-        val permit = GlassesSessionCoordinator.tryAcquireBackgroundCommand() ?: return
+        if (busy || !ready || !hasNearby() || !manager.isConnected) {
+            note("photo rejected busy=$busy ready=$ready nearby=${hasNearby()} connected=${hasNearby() && manager.isConnected}")
+            return
+        }
+        val permit = GlassesSessionCoordinator.tryAcquireBackgroundCommand() ?: run {
+            note("photo rejected: command permit occupied")
+            return
+        }
         if (!GlassesSessionCoordinator.canRequestThumbnail(permit)) {
             GlassesSessionCoordinator.releaseBackgroundCommand(permit)
             note("После незавершённой передачи отключите и снова подключите очки")
@@ -259,9 +281,9 @@ class JpegTestActivity : Activity() {
                 val confirmedAt = photoReadyAt ?: run {
                     note("Запрос свежего фото: качество Clearer")
                     withContext(Dispatchers.IO) {
-                        cameraCommand(byteArrayOf(0x02, 0x01, 0x06, 4, 4))
+                        cameraCommand("vision", byteArrayOf(0x02, 0x01, 0x06, 4, 4))
                         delay(250)
-                        cameraCommand(byteArrayOf(0x02, 0x01, 0x01))
+                        cameraCommand("shutter", byteArrayOf(0x02, 0x01, 0x01))
                     }
                     withTimeout(5_000) { requireNotNull(waiter).await() }
                 }
@@ -290,7 +312,7 @@ class JpegTestActivity : Activity() {
                         BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = 2 })
                     }
                     preview.setImageBitmap(bitmap)
-                    note("W610_PREVIEW_OK decoded=true bytes=${file.length()} galleryUri=$gallery")
+                    note("W610_PREVIEW_OK decoded=true bytes=${file.length()} gallerySaved=${gallery != null}")
                     note(if (gallery != null) "W610 JPEG OK — Галерея / CyanBridge W610" else "JPEG OK — копия в приложении; сохранение в галерею не удалось")
                 }
             } catch (cancelled: CancellationException) {
@@ -309,11 +331,13 @@ class JpegTestActivity : Activity() {
         }
     }
 
-    private suspend fun cameraCommand(bytes: ByteArray) {
-        val response = CompletableDeferred<GlassModelControlResponse>()
-        sdk.glassesControl(bytes) { _, result -> response.complete(result) }
-        val result = withTimeout(2_000) { response.await() }
-        check(result.errorCode == 0) { "Camera error=${result.errorCode}" }
+    private fun cameraCommand(stage: String, bytes: ByteArray) {
+        val sentAt = SystemClock.elapsedRealtime()
+        note("camera send stage=$stage; waiting for photo-ready, not ACK success")
+        sdk.glassesControl(bytes) { _, result ->
+            note("camera ACK stage=$stage dataType=${result.dataType} error=${result.errorCode} " +
+                "latencyMs=${SystemClock.elapsedRealtime() - sentAt}; photo-ready remains authoritative")
+        }
     }
 
     private fun connectionLost(message: String) {
