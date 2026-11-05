@@ -19,5 +19,8 @@ class ManifestAuditTest(unittest.TestCase):
         with self.assertRaises(AssertionError): audit(fixture(exported='true'))
     def test_wrong_foreground_type_fails(self):
         with self.assertRaises(AssertionError): audit(fixture(service='microphone'))
+    def test_sdk_numeric_foreground_type(self):
+        for value in ['0x10', '0x00000010', '16']:
+            self.assertEqual('PASS', audit(fixture(service=value))['result'])
 
 if __name__ == '__main__': unittest.main()

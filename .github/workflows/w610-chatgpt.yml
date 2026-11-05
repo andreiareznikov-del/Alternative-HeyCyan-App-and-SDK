@@ -69,4 +69,6 @@ jobs:
           path: |
             android/CyanBridge/w610chatgpt/build/reports/
             android/CyanBridge/w610chatgpt/build/test-results/
+            audit/AndroidManifest.xml
+            audit/manifest-audit.json
           retention-days: 30

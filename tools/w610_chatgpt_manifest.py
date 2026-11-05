@@ -32,7 +32,12 @@ def audit(xml):
     services = app.findall('service')
     assert len(services) == 1
     assert services[0].get(NS+'name').endswith('.W610BridgeService')
-    assert services[0].get(NS+'foregroundServiceType') in ('connectedDevice', '0x00000010', '16')
+    service_type = services[0].get(NS+'foregroundServiceType', '')
+    try:
+        numeric_type = int(service_type, 0)
+    except ValueError:
+        numeric_type = None
+    assert service_type == 'connectedDevice' or numeric_type == 0x10, service_type
     assert services[0].get(NS+'exported') == 'false'
     providers = app.findall('provider')
     assert len(providers) == 1
