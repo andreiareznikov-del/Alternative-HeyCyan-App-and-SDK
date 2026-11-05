@@ -49,6 +49,8 @@ include(":app")
 include(":shared")
 // Foreground-only W610 JPEG harness; does not depend on the full application.
 include(":w610jpeg")
+// Isolated integration experiment; the app and Diagnostics modules are unchanged.
+include(":w610chatgpt")
 
 // HeyCyan Core - bundled as composite build for easy compilation
 val heycyanCoreDir = file("../../heycyan-core")
