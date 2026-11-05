@@ -17,11 +17,13 @@ args = parser.parse_args()
 assert Path(args.unsigned).resolve() != Path(args.signed).resolve()
 subprocess.run(['java', '-jar', args.apksigner_jar, 'sign', '--ks', args.keystore,
     '--ks-key-alias', 'w610chatgpt', '--ks-pass', 'file:'+args.password_file,
-    '--key-pass', 'file:'+args.password_file, '--out', args.signed, args.unsigned], check=True)
+    '--v2-signing-enabled', 'true', '--v3-signing-enabled', 'true', '--v4-signing-enabled', 'false',
+    '--out', args.signed, args.unsigned], check=True)
 result = subprocess.run(['java', '-jar', args.apksigner_jar, 'verify', '--verbose', '--print-certs', args.signed], check=True, text=True, capture_output=True)
 cert = re.search(r'Signer #1 certificate SHA-256 digest: ([a-fA-F0-9]+)', result.stdout)
 assert cert and cert.group(1).lower() == args.expected_cert_sha256.lower().replace(':',''), 'Unexpected signing certificate'
-assert 'Verified using v2 scheme (APK Signature Scheme v2): true' in result.stdout
+# With minSdk 31 the verifier may only report v3, even when v2 is also embedded.
+assert re.search(r'Verified using v[23](?:\.1)? scheme[^\n]*: true', result.stdout)
 with zipfile.ZipFile(args.unsigned) as a, zipfile.ZipFile(args.signed) as b:
     assert a.read('AndroidManifest.xml') == b.read('AndroidManifest.xml'), 'Manifest changed after CI audit'
     for name in a.namelist():
